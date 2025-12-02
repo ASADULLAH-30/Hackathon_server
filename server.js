@@ -19,13 +19,28 @@ import cookieParser from "cookie-parser";
 dotenv.config();
 
 const app = express();
+const allowedOrigins = [
+  process.env.CORS_ORIGIN,
+  process.env.CORS_ORIGIN_2,
+  process.env.FRONTEND_URL,
+  'http://localhost:5173'
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN_2 || true,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(new URL(origin).hostname)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 const PORT = process.env.PORT || 3000;
@@ -36,20 +51,25 @@ console.log("   PORT:", PORT);
 console.log("   MONGODB_URI:", MONGODB_URI ? "✅ Present" : "❌ Missing");
 console.log("   JWT_SECRET:", process.env.JWT_SECRET ? "✅ Present" : "❌ Missing");
 
-// 🔌 Connect MongoDB
-if (!MONGODB_URI) {
-  console.error("❌ MONGODB_URI is not defined in .env file");
-} else {
-  mongoose
-    .connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-    })
-    .then(() => console.log("✅ MongoDB connected successfully"))
-    .catch((err) => {
-      console.error("❌ MongoDB connection error:", err.message);
-      console.log("⚠️  Server will continue running but database operations will fail");
+// 🔌 MongoDB connection helper for serverless
+const connectDB = async () => {
+  if (!MONGODB_URI) {
+    console.error("❌ MONGODB_URI is not defined in environment variables");
+    return;
+  }
+  if (mongoose.connection.readyState >= 1) return;
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      maxPoolSize: 10,
+      socketTimeoutMS: 45000,
     });
-}
+    console.log("✅ MongoDB connected successfully");
+  } catch (err) {
+    console.error("❌ MongoDB connection error:", err.message);
+  }
+};
+connectDB();
 
 // Initialize Gemini client
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
@@ -190,6 +210,10 @@ app.get("/", (req, res) => {
   res.send("Server is running.");
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on ${PORT}`);
+  });
+}
+
+export default app;

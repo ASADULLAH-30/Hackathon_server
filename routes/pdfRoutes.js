@@ -5,7 +5,11 @@ import PdfHistory from '../models/PdfHistory.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
-const upload = multer({ dest: 'uploads/' });
+// Use memory storage for serverless (no disk writes)
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 } // 20MB
+});
 
 // Upload PDF and save to Cloudinary + DB
 router.post('/upload', authenticateToken, upload.single('pdf'), async (req, res) => {
@@ -14,8 +18,12 @@ router.post('/upload', authenticateToken, upload.single('pdf'), async (req, res)
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path, {
+    // Convert buffer to base64 data URI for Cloudinary
+    const b64 = Buffer.from(req.file.buffer).toString('base64');
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+
+    // Upload to Cloudinary from memory
+    const result = await cloudinary.uploader.upload(dataURI, {
       resource_type: 'raw',
       folder: 'healthmate/pdfs',
     });
@@ -34,9 +42,7 @@ router.post('/upload', authenticateToken, upload.single('pdf'), async (req, res)
 
     await pdfHistory.save();
 
-    // Delete local file
-    const fs = await import('fs');
-    fs.unlinkSync(req.file.path);
+    // No local file to delete when using memory storage
 
     res.json({
       message: 'PDF uploaded successfully',
